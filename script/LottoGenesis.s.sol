@@ -28,9 +28,8 @@ contract DeployLottoGenesis is Script {
             console.log("second subId: ", createSubscription.createSubscription(vrfCoordinator));
 
             //Fund it
-            FundSubscription fundSubscription = new FundSubscription();
-            
-
+            new FundSubscription();
+            // FundSubscription fundSubscription = new FundSubscription();
         }
 
         vm.startBroadcast();

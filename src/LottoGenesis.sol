@@ -22,6 +22,7 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
     // State variables
     uint16 private constant REQUEST_CONFIRMATIONS = 3;
     uint32 private constant NUM_WORDS = 1;
+    uint256 private constant OWNER_PERCENTAGE = 10;
 
     uint256 private immutable i_entranceFee; // Fee to enter the lottery
     uint256 private immutable i_interval; // Time interval between lottery draws
@@ -42,7 +43,8 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
     event EnteredLottoGenesis(address indexed player, uint256 amount);
     event RequestedLottoGenesisWinner(uint256 indexed requestId);
     event WinnerPicked(address indexed winner, uint256 amount, uint256 timestamp);
-    event Withdrawal(address indexed winner, uint256 amount, bytes data);
+    event WinnerWithdrawal(address indexed winner, uint256 amount, bytes data);
+    event OwnerWithdrawal(address indexed owner, uint256 amount, bytes data);
 
     // Errors
     error LottoGenesis_TransferFailed();
@@ -144,6 +146,8 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
      * @param randomWords The array of random words
      */
     function fulfillRandomWords(uint256, /* requestId */ uint256[] calldata randomWords) internal override {
+        // This approach ensures fairness and unpredictability in selecting a winner.
+        // randomWords[0] is a large random number provided by Chainlink VRF
         uint256 winnerIndex = randomWords[0] % s_players.length;
         address payable recentWinner = s_players[winnerIndex];
         s_recentWinner = recentWinner;
@@ -159,10 +163,20 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
 
         emit WinnerPicked(recentWinner, address(this).balance, block.timestamp);
 
-        (bool success, bytes memory data) = payable(recentWinner).call{value: address(this).balance}("");
-        if (!success) revert LottoGenesis_TransferFailed();
+        // Calculate the owner's share
+        uint256 ownerShare = (address(this).balance * OWNER_PERCENTAGE) / 100;
 
-        emit Withdrawal(recentWinner, address(this).balance, data);
+        // Transfer the owner's share
+        (bool ownerSuccess, bytes memory ownerData) = payable(owner()).call{value: ownerShare}("");
+        if (!ownerSuccess) revert LottoGenesis_TransferFailed();
+
+        emit OwnerWithdrawal(owner(), ownerShare, ownerData);
+
+        // Transfer the remaining balance to the winner
+        (bool winnerSuccess, bytes memory winnerData) = payable(recentWinner).call{value: address(this).balance}("");
+        if (!winnerSuccess) revert LottoGenesis_TransferFailed();
+
+        emit WinnerWithdrawal(recentWinner, address(this).balance, winnerData);
     }
 
     // Getter functions

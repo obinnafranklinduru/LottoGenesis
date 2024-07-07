@@ -7,37 +7,38 @@ import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/inter
 import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
 
 /**
- * @title A sample LottoGenesis Contract
+ * @title LottoGenesis Smart Contract
  * @author Obinna Franklin Duru
  * @notice This contract is for creating a sample lottery contract
  * @dev This implements the Chainlink VRF Version 2
  */
 contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
-    // Type declarations
+    // Enumeration to represent the state of the lottery
     enum LottoGenesisState {
         OPEN,
         CALCULATING
     }
 
-    // State variables
-    uint16 private constant REQUEST_CONFIRMATIONS = 3;
-    uint32 private constant NUM_WORDS = 1;
-    uint256 private constant OWNER_PERCENTAGE = 10;
+    // Constants
+    uint16 private constant REQUEST_CONFIRMATIONS = 3; // Number of confirmations for VRF request
+    uint32 private constant NUM_WORDS = 1; // Number of random words requested
+    uint256 private constant OWNER_PERCENTAGE = 10; // Owner's share in percentage
 
+    // Immutable variables
     uint256 private immutable i_entranceFee; // Fee to enter the lottery
     uint256 private immutable i_interval; // Time interval between lottery draws
-    uint256 private s_lastTimeStamp; // Last time a winner was picked
     uint64 private immutable i_subscriptionId; // Chainlink VRF subscription ID
     uint32 private immutable i_callbackGasLimit; // Gas limit for callback function
-
-    address payable[] private s_players; // Array of players in the lottery
-    address payable private s_recentWinner; // Most recent winner of the lottery
-
     bytes32 private immutable i_keyHash; // Key hash for Chainlink VRF
 
+    // State variables
+    uint256 private s_lastTimeStamp; // Last time a winner was picked
+    address payable[] private s_players; // Array of players in the lottery
+    address payable private s_recentWinner; // Most recent winner of the lottery
     LottoGenesisState private s_lottoGenesisState; // Current state of the lottery
 
-    mapping(address => bool) private s_isPlayer; // Mapping to track if an address has already entered the lottery
+    // Mapping to track if an address has already entered the lottery
+    mapping(address => bool) private s_isPlayer;
 
     // Events
     event EnteredLottoGenesis(address indexed player, uint256 amount);
@@ -89,7 +90,7 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
         if (s_lottoGenesisState != LottoGenesisState.OPEN) revert LottoGenesis_LottoGenesisNotOpen();
         if (s_isPlayer[msg.sender]) revert LottoGenesis_IsPlayerLottoGenesis();
 
-        s_players.push(payable(msg.sender));
+        s_players.push(payable(msg.sender)); // Add the player to the players array
         s_isPlayer[msg.sender] = true; // Mark the player as entered
 
         emit EnteredLottoGenesis(msg.sender, msg.value);
@@ -120,12 +121,13 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
      * @dev Requests random words from the VRF coordinator
      */
     function performUpkeep(bytes calldata /* performData */ ) external override {
+        // Check if upkeep is needed
         (bool upkeepNeeded,) = checkUpkeep("");
         if (!upkeepNeeded) {
             revert LottoGenesis_UpkeepNotNeeded(address(this).balance, s_players.length, uint256(s_lottoGenesisState));
         }
 
-        s_lottoGenesisState = LottoGenesisState.CALCULATING;
+        s_lottoGenesisState = LottoGenesisState.CALCULATING; // Set state to CALCULATING
 
         uint256 requestId = s_vrfCoordinator.requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({

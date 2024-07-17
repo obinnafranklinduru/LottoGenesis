@@ -27,7 +27,7 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
     // Immutable variables
     uint256 private immutable i_entranceFee; // Fee to enter the lottery
     uint256 private immutable i_interval; // Time interval between lottery draws
-    uint64 private immutable i_subscriptionId; // Chainlink VRF subscription ID
+    uint256 private immutable i_subscriptionId; // Chainlink VRF subscription ID
     uint32 private immutable i_callbackGasLimit; // Gas limit for callback function
     bytes32 private immutable i_keyHash; // Key hash for Chainlink VRF
 
@@ -68,7 +68,7 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
         uint256 _interval,
         address _vrfCoordinator,
         bytes32 _keyHash,
-        uint64 _subscriptionId,
+        uint256 _subscriptionId,
         uint32 _callbackGasLimit
     ) VRFConsumerBaseV2Plus(_vrfCoordinator) {
         i_entranceFee = _entranceFee;
@@ -212,6 +212,10 @@ contract LottoGenesis is VRFConsumerBaseV2Plus, AutomationCompatibleInterface {
 
     function getEntranceFee() public view returns (uint256) {
         return i_entranceFee;
+    }
+
+    function getOwnerPercentage() public pure returns (uint256) {
+        return OWNER_PERCENTAGE;
     }
 
     function getNumberOfPlayers() public view returns (uint256) {

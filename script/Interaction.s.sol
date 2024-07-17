@@ -2,87 +2,120 @@
 pragma solidity ^0.8.13;
 
 import {Script, console} from "forge-std/Script.sol";
-import {LottoGenesis} from "../src/LottoGenesis.sol";
-import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/mocks/VRFCoordinatorV2Mock.sol";
-import {HelperConfig} from "./HelperConfig.s.sol";
+import {VRFCoordinatorV2_5Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2_5Mock.sol";
+import {DevOpsTools} from "foundry-devops/src/DevOpsTools.sol";
 import {LinkToken} from "../test/mocks/LinkToken.sol";
-import {DevOpsTools} from "lib/foundry-devops/src/DevOpsTools.sol";
+import {LottoGenesis} from "../src/LottoGenesis.sol";
+import {HelperConfig} from "./HelperConfig.s.sol";
+import {CodeConstants} from "./HelperConfig.s.sol";
 
+// CreateSubscription contract is responsible for creating a new Chainlink VRF subscription
 contract CreateSubscription is Script {
-    function createSubscriptionUsingConfig() public returns (uint64) {
+    // Function to create a subscription using configuration from HelperConfig
+    function createSubscriptionUsingConfig() public returns (uint256, address) {
         HelperConfig helperConfig = new HelperConfig();
 
-        (,, address vrfCoordinator,,,,) = helperConfig.activeNetworkConfig();
+        address vrfCoordinatorV2_5 = helperConfig.getConfigByChainId(block.chainid).vrfCoordinatorV2_5;
+        address account = helperConfig.getConfigByChainId(block.chainid).account;
 
-        return createSubscription(vrfCoordinator);
+        return createSubscription(vrfCoordinatorV2_5, account);
     }
 
-    function createSubscription(address _vrfCoordinator) public returns (uint64) {
+    // Function to create a subscription given a VRF coordinator address and account
+    function createSubscription(address _vrfCoordinatorV2_5, address _account) public returns (uint256, address) {
         console.log("Creating Subscription on ChainId: ", block.chainid);
 
-        vm.startBroadcast();
-        uint64 subId = VRFCoordinatorV2Mock(_vrfCoordinator).createSubscription();
+        vm.startBroadcast(_account);
+        uint256 subId = VRFCoordinatorV2_5Mock(_vrfCoordinatorV2_5).createSubscription();
         vm.stopBroadcast();
 
         console.log("subId: ", subId);
-        return subId;
+        return (subId, _vrfCoordinatorV2_5);
     }
 
-    function run() external returns (uint64) {
+    // Main function that runs the createSubscriptionUsingConfig function
+    function run() external returns (uint256, address) {
         return createSubscriptionUsingConfig();
     }
 }
 
-contract FundSubscription is Script {
-    uint96 public constant FUND_AMOUNT = 3 ether;
+// AddConsumer contract is responsible for adding a consumer to an existing Chainlink VRF subscription
+contract AddConsumer is Script {
+    // Function to add a consumer given a contract address, VRF coordinator address, subscription ID, and account
+    function addConsumer(address _contractToAddToVrf, address _vrfCoordinator, uint256 _subId, address _account) public {
+        console.log("Adding consumer contract: ", _contractToAddToVrf);
+        console.log("Using vrfCoordinator: ", _vrfCoordinator);
+        console.log("On ChainID: ", block.chainid);
 
-    function fundSubscriptionUsingConfig() public {
-        HelperConfig helperConfig = new HelperConfig();
-
-        (,, address vrfCoordinator,, uint64 subscriptionId,, address link) = helperConfig.activeNetworkConfig();
-
-        fundSubscription(vrfCoordinator, subscriptionId, link);
+        vm.startBroadcast(_account);
+        VRFCoordinatorV2_5Mock(_vrfCoordinator).addConsumer(_subId, _contractToAddToVrf);
+        vm.stopBroadcast();
     }
 
-    function fundSubscription(address _vrfCoordinator, uint64 _subscriptionId, address _link) public {
-        console.log("funding Subscription on ChainId: ", block.chainid);
+    // Function to add a consumer using configuration from HelperConfig and the most recently deployed contract address
+    function addConsumerUsingConfig(address _mostRecentlyDeployed) public {
+        HelperConfig helperConfig = new HelperConfig();
+        uint256 subId = helperConfig.getConfig().subscriptionId;
+        address vrfCoordinatorV2_5 = helperConfig.getConfig().vrfCoordinatorV2_5;
+        address account = helperConfig.getConfig().account;
 
-        if (block.chainid == 31337) {
-            vm.startBroadcast();
-            VRFCoordinatorV2Mock(_vrfCoordinator).fundSubscription(_subscriptionId, FUND_AMOUNT);
+        addConsumer(_mostRecentlyDeployed, vrfCoordinatorV2_5, subId, account);
+    }
+
+    // Main function that runs the addConsumerUsingConfig function
+    function run() external {
+        address mostRecentlyDeployed = DevOpsTools.get_most_recent_deployment("LottoGenesis", block.chainid);
+        addConsumerUsingConfig(mostRecentlyDeployed);
+    }
+}
+
+// FundSubscription contract is responsible for funding a Chainlink VRF subscription
+contract FundSubscription is CodeConstants, Script {
+    uint96 public constant FUND_AMOUNT = 3 ether;
+
+    // Function to fund a subscription using configuration from HelperConfig
+    function fundSubscriptionUsingConfig() public {
+        HelperConfig helperConfig = new HelperConfig();
+        uint256 subId = helperConfig.getConfig().subscriptionId;
+        address vrfCoordinatorV2_5 = helperConfig.getConfig().vrfCoordinatorV2_5;
+        address link = helperConfig.getConfig().link;
+        address account = helperConfig.getConfig().account;
+
+        if (subId == 0) {
+            CreateSubscription createSub = new CreateSubscription();
+            (uint256 updatedSubId, address updatedVRFv2) = createSub.run();
+            subId = updatedSubId;
+            vrfCoordinatorV2_5 = updatedVRFv2;
+            console.log("New SubId Created! ", subId, "VRF Address: ", vrfCoordinatorV2_5);
+        }
+
+        fundSubscription(vrfCoordinatorV2_5, subId, link, account);
+    }
+
+    // Function to fund a subscription given a VRF coordinator address, subscription ID, Link token address, and account
+    function fundSubscription(address _vrfCoordinatorV2_5, uint256 _subId, address _link, address _account) public {
+        console.log("Funding subscription: ", _subId);
+        console.log("Using vrfCoordinator: ", _vrfCoordinatorV2_5);
+        console.log("On ChainID: ", block.chainid);
+
+        if (block.chainid == LOCAL_CHAIN_ID) {
+            vm.startBroadcast(_account);
+            VRFCoordinatorV2_5Mock(_vrfCoordinatorV2_5).fundSubscription(_subId, FUND_AMOUNT);
             vm.stopBroadcast();
         } else {
-            vm.startBroadcast();
-            LinkToken(_link).transferAndCall(_vrfCoordinator, FUND_AMOUNT, abi.encode(_subscriptionId));
+            console.log(LinkToken(_link).balanceOf(msg.sender));
+            console.log(msg.sender);
+            console.log(LinkToken(_link).balanceOf(address(this)));
+            console.log(address(this));
+
+            vm.startBroadcast(_account);
+            LinkToken(_link).transferAndCall(_vrfCoordinatorV2_5, FUND_AMOUNT, abi.encode(_subId));
             vm.stopBroadcast();
         }
     }
 
+    // Main function that runs the fundSubscriptionUsingConfig function
     function run() external {
         fundSubscriptionUsingConfig();
-    }
-}
-
-contract AddConsumer is Script {
-    function addConsumerUsingConfig(address _lottoGenesis) public {
-        HelperConfig helperConfig = new HelperConfig();
-
-        (,, address vrfCoordinator,, uint64 subscriptionId,,) = helperConfig.activeNetworkConfig();
-
-        addConsumer(_lottoGenesis, vrfCoordinator, subscriptionId);
-    }
-
-    function addConsumer(address _lottoGenesis, address _vrfCoordinator, uint64 _subscriptionId) public {
-        console.log("Adding a Consumer on ChainId: ", block.chainid);
-
-        vm.startBroadcast();
-        VRFCoordinatorV2Mock(_vrfCoordinator).addConsumer(_subscriptionId, _lottoGenesis);
-        vm.stopBroadcast();
-    }
-
-    function run() external {
-        address lottoGenesis = DevOpsTools.get_most_recent_deployment("LottoGenesis", block.chainid);
-
-        addConsumerUsingConfig(lottoGenesis);
     }
 }

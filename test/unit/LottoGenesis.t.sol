@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
+import {Vm} from "forge-std/Vm.sol";
+import {VRFCoordinatorV2_5Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2_5Mock.sol";
+import {LinkToken} from "../../test/mocks/LinkToken.sol";
+import {CodeConstants} from "../../script/HelperConfig.s.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {LottoGenesis} from "../../src/LottoGenesis.sol";
 import {DeployLottoGenesis} from "../../script/LottoGenesis.s.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 
-contract LottoGenesisTest is Test {
+contract LottoGenesisTest is Test, CodeConstants {
     LottoGenesis lottoGenesis;
     HelperConfig helperConfig;
 
@@ -20,29 +24,36 @@ contract LottoGenesisTest is Test {
     uint256 constant STARTING_BALANCE = 10 ether;
     uint256 public constant LINK_BALANCE = 100 ether;
 
-    uint256 entranceFee;
-    uint256 interval;
-    address vrfCoordinator;
+    uint256 subscriptionId;
     bytes32 keyHash;
-    uint64 subscriptionId;
+    uint256 automationUpdateInterval;
+    uint256 lottoGenesisEntranceFee;
     uint32 callbackGasLimit;
+    address vrfCoordinatorV2_5;
+    LinkToken link;
 
-    // Setup function to deploy the EthFund contract and provide initial balances
     function setUp() public {
-        DeployLottoGenesis deployLottoGenesis = new DeployLottoGenesis();
-        (lottoGenesis, helperConfig) = deployLottoGenesis.run();
+        DeployLottoGenesis deployer = new DeployLottoGenesis();
+        (lottoGenesis, helperConfig) = deployer.run();
 
         vm.deal(PLAYER, STARTING_BALANCE);
 
-        (
-            entranceFee,
-            interval,
-            vrfCoordinator,
-            keyHash,
-            subscriptionId,
-            callbackGasLimit,
-            /* link */
-        ) = helperConfig.activeNetworkConfig();
+        HelperConfig.NetworkConfig memory config = helperConfig.getConfig();
+        subscriptionId = config.subscriptionId;
+        keyHash = config.keyHash;
+        automationUpdateInterval = config.automationUpdateInterval;
+        lottoGenesisEntranceFee = config.lottoGenesisEntranceFee;
+        callbackGasLimit = config.callbackGasLimit;
+        vrfCoordinatorV2_5 = config.vrfCoordinatorV2_5;
+        link = LinkToken(config.link);
+
+        vm.startPrank(msg.sender);
+        if (block.chainid == LOCAL_CHAIN_ID) {
+            link.mint(msg.sender, LINK_BALANCE);
+            VRFCoordinatorV2_5Mock(vrfCoordinatorV2_5).fundSubscription(subscriptionId, LINK_BALANCE);
+        }
+        link.approve(vrfCoordinatorV2_5, LINK_BALANCE);
+        vm.stopPrank();
     }
 
     function testLottoGenesisInitializesInOpenState() public view {
@@ -51,26 +62,26 @@ contract LottoGenesisTest is Test {
 
     function testEnterLottoGenesis() public {
         vm.prank(PLAYER);
-        lottoGenesis.enterLottoGenesis{value: entranceFee}();
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
         address playerInContract = lottoGenesis.getPlayer(0);
         assert(playerInContract == PLAYER);
     }
 
     function testFailIfAlreadyEntered() public {
         vm.prank(PLAYER);
-        lottoGenesis.enterLottoGenesis{value: entranceFee}();
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
 
         vm.expectRevert(LottoGenesis.LottoGenesis_IsPlayerLottoGenesis.selector);
-        lottoGenesis.enterLottoGenesis{value: entranceFee}();
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
     }
 
     function testEntranceFeeRequirement() public view {
-        assert(entranceFee == lottoGenesis.getEntranceFee());
+        assert(lottoGenesisEntranceFee == lottoGenesis.getEntranceFee());
     }
 
     function testShouldRecordWhenTheyEnter() public {
         vm.prank(PLAYER);
-        lottoGenesis.enterLottoGenesis{value: entranceFee}();
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
         address player = lottoGenesis.getPlayer(0);
         assert(player == PLAYER);
     }
@@ -78,20 +89,41 @@ contract LottoGenesisTest is Test {
     function testEnterLottoGenesisEmitsEvent() public {
         vm.prank(PLAYER);
         vm.expectEmit(true, true, false, true, address(lottoGenesis));
-        emit EnteredLottoGenesis(PLAYER, entranceFee);
-        lottoGenesis.enterLottoGenesis{value: entranceFee}();
+        emit EnteredLottoGenesis(PLAYER, lottoGenesisEntranceFee);
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
     }
 
     function testCantEnterWhenLottoGenesisIsCalculating() public {
         vm.prank(PLAYER);
-        lottoGenesis.enterLottoGenesis{value: entranceFee}();
-        vm.warp(block.timestamp + interval + 1);
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
+        vm.warp(block.timestamp + lottoGenesisEntranceFee + 1);
         vm.roll(block.number + 1);
         lottoGenesis.performUpkeep("");
 
         vm.expectRevert(LottoGenesis.LottoGenesis_LottoGenesisNotOpen.selector);
         vm.prank(PLAYER);
-        lottoGenesis.enterLottoGenesis{value: entranceFee}();
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
+    }
+
+    function testCheckUpKeepReturnsFalseIfIthasNoBalance() public {
+        vm.warp(block.timestamp + lottoGenesisEntranceFee + 1);
+        vm.roll(block.number + 1);
+
+        (bool upkeepNeeded,) = lottoGenesis.checkUpkeep("");
+
+        assert(!upkeepNeeded);
+    }
+
+    function testCheckUpKeepReturnsFalseIfLottoGenesisNotOpen() public {
+        vm.prank(PLAYER);
+        lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
+        vm.warp(block.timestamp + lottoGenesisEntranceFee + 1);
+        vm.roll(block.number + 1);
+        lottoGenesis.performUpkeep("");
+
+        (bool upkeepNeeded,) = lottoGenesis.checkUpkeep("");
+
+        assert(upkeepNeeded == false);
     }
 
     // function testWinnerSelectionAndPayout() public {
@@ -104,7 +136,7 @@ contract LottoGenesisTest is Test {
 
     // function testUpkeepNeeded() public {
     //     vm.prank(PLAYER);
-    //     lottoGenesis.enterLottoGenesis{value: entranceFee}();
+    //     lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
     //     bool upkeepNeeded;
     //     (upkeepNeeded, ) = lottoGenesis.checkUpkeep("");
     //     assert(upkeepNeeded == true);
@@ -119,7 +151,7 @@ contract LottoGenesisTest is Test {
 
     // function testFulfillRandomWords() public {
     //     vm.prank(PLAYER);
-    //     lottoGenesis.enterLottoGenesis{value: entranceFee}();
+    //     lottoGenesis.enterLottoGenesis{value: lottoGenesisEntranceFee}();
     //     uint256[] memory randomWords = new uint256[](1);
     //     randomWords[0] = 1;
     //     lottoGenesis.fulfillRandomWords(0, randomWords);

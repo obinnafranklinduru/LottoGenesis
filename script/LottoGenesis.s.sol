@@ -6,37 +6,49 @@ import {LottoGenesis} from "../src/LottoGenesis.sol";
 import {HelperConfig} from "./HelperConfig.s.sol";
 import {CreateSubscription, FundSubscription, AddConsumer} from "./Interaction.s.sol";
 
+// DeployLottoGenesis contract inherits from Script, which provides useful methods for deployment and interaction with contracts
 contract DeployLottoGenesis is Script {
+    // Main function that deploys LottoGenesis and HelperConfig contracts
     function run() external returns (LottoGenesis, HelperConfig) {
+        // Create a new instance of the HelperConfig contract
         HelperConfig helperConfig = new HelperConfig();
+        // Create a new instance of the AddConsumer contract
+        AddConsumer addConsumer = new AddConsumer();
+        // Get network configuration from HelperConfig
+        HelperConfig.NetworkConfig memory config = helperConfig.getConfig();
 
-        (
-            uint256 entranceFee,
-            uint256 interval,
-            address vrfCoordinator,
-            bytes32 keyHash,
-            uint64 subscriptionId,
-            uint32 callbackGasLimit,
-            /* address link */
-        ) = helperConfig.activeNetworkConfig();
-
-        if (subscriptionId == 0) {
+        // Check if a Chainlink VRF subscription is needed
+        if (config.subscriptionId == 0) {
+            // Create a new subscription if one does not exist
             CreateSubscription createSubscription = new CreateSubscription();
-            subscriptionId = createSubscription.run();
-            console.log("first subId: ", subscriptionId);
-            // subscriptionId = createSubscription.createSubscription(vrfCoordinator);
-            console.log("second subId: ", createSubscription.createSubscription(vrfCoordinator));
+            (config.subscriptionId, config.vrfCoordinatorV2_5) =
+                createSubscription.createSubscription(config.vrfCoordinatorV2_5, config.account);
 
-            //Fund it
-            new FundSubscription();
-            // FundSubscription fundSubscription = new FundSubscription();
+            // Fund the newly created subscription
+            FundSubscription fundSubscription = new FundSubscription();
+            fundSubscription.fundSubscription(
+                config.vrfCoordinatorV2_5, config.subscriptionId, config.link, config.account
+            );
         }
 
-        vm.startBroadcast();
-        LottoGenesis lottoGenesis =
-            new LottoGenesis(entranceFee, interval, vrfCoordinator, keyHash, subscriptionId, callbackGasLimit);
+        // Start broadcasting transactions from the specified account
+        vm.startBroadcast(config.account);
+        // Deploy the LottoGenesis contract with parameters from the network configuration
+        LottoGenesis lottoGenesis = new LottoGenesis(
+            config.lottoGenesisEntranceFee,
+            config.automationUpdateInterval,
+            config.vrfCoordinatorV2_5,
+            config.keyHash,
+            config.subscriptionId,
+            config.callbackGasLimit
+        );
+        // Stop broadcasting transactions
         vm.stopBroadcast();
 
+        // Add the LottoGenesis contract as a consumer to the Chainlink VRF subscription
+        addConsumer.addConsumer(address(lottoGenesis), config.vrfCoordinatorV2_5, config.subscriptionId, config.account);
+
+        // Return the deployed LottoGenesis and HelperConfig contracts
         return (lottoGenesis, helperConfig);
     }
 }
